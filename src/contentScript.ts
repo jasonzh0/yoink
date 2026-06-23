@@ -262,8 +262,8 @@ const nextPaint = (): Promise<void> =>
 const delay = (ms: number): Promise<void> =>
   new Promise((resolve) => window.setTimeout(resolve, ms));
 
-const eagerLoadImages = (): void => {
-  for (const img of Array.from(document.images)) {
+const eagerLoadImages = (scope: ParentNode): void => {
+  for (const img of Array.from(scope.querySelectorAll('img'))) {
     if (img.loading === 'lazy') img.loading = 'eager';
     const dataSrc = img.getAttribute('data-src');
     if (dataSrc && !img.currentSrc) img.src = dataSrc;
@@ -272,10 +272,10 @@ const eagerLoadImages = (): void => {
   }
 };
 
-/** Wait for every image to finish (bounded), so none is captured empty. */
-const waitForImages = (timeout: number): Promise<unknown> =>
+/** Wait for the images in `scope` to finish (bounded), so none is captured empty. */
+const waitForImages = (scope: ParentNode, timeout: number): Promise<unknown> =>
   Promise.all(
-    Array.from(document.images)
+    Array.from(scope.querySelectorAll('img'))
       .filter((img) => !img.complete)
       .map((img) =>
         Promise.race([
@@ -289,15 +289,21 @@ const waitForImages = (timeout: number): Promise<unknown> =>
   );
 
 /**
- * Marketing sites (Webflow et al.) lazy-load images and reveal sections via
- * IntersectionObserver on scroll, so a quick capture grabs empty/half-built
- * content. Be patient: load fonts, scroll the whole page in small steps so every
- * section gets revealed and its assets requested, then settle and wait for
- * images — twice, since a second pass catches anything the first kicked off.
+ * Get assets loaded before reading the DOM.
+ *
+ * Whole-page captures must trip lazy loaders and IntersectionObserver section
+ * reveals, so we load fonts and scroll the page in small steps (twice) before
+ * settling. A picked element is already on screen, so we skip the page scroll
+ * entirely (it's pointless and jarring) and just ensure its own images load.
  */
-async function prepareLazyContent(): Promise<void> {
-  eagerLoadImages();
+async function prepareLazyContent(root: Element, fullPage: boolean): Promise<void> {
+  if (!fullPage) {
+    eagerLoadImages(root);
+    await waitForImages(root, 2500);
+    return;
+  }
 
+  eagerLoadImages(document);
   try {
     await Promise.race([document.fonts.ready, delay(2500)]);
   } catch {
@@ -314,26 +320,28 @@ async function prepareLazyContent(): Promise<void> {
       window.scrollTo(0, y);
       await delay(130);
     }
-    eagerLoadImages();
-    await waitForImages(3500);
+    eagerLoadImages(document);
+    await waitForImages(document, 3500);
   }
 
   // Back to the top and let reveal animations settle before we read the DOM.
   window.scrollTo(startX, startY);
   await delay(600);
-  await waitForImages(2000);
+  await waitForImages(document, 2000);
 }
 
-async function capture(source: Element): Promise<void> {
+async function capture(source: Element, fullPage: boolean): Promise<void> {
   const total = source.querySelectorAll('*').length;
   if (total > REFUSE_ABOVE) {
     showToast('That selection is too large — pick a smaller element', 'error');
     return;
   }
 
-  showToast('Loading page…', 'success');
-  await nextPaint();
-  await prepareLazyContent();
+  if (fullPage) {
+    showToast('Loading page…', 'success');
+    await nextPaint();
+  }
+  await prepareLazyContent(source, fullPage);
   showToast('Yoinking…', 'success');
   await nextPaint();
 
@@ -386,10 +394,10 @@ if (!(window as unknown as Record<string, boolean>)[flag]) {
 
   chrome.runtime.onMessage.addListener((message: PopupMessage) => {
     if (message.type === 'YOINK_START_PICK') {
-      startPicker((el) => void capture(el));
+      startPicker((el) => void capture(el, false));
     } else if (message.type === 'YOINK_CAPTURE_PAGE') {
       const body = document.body;
-      if (body) void capture(body);
+      if (body) void capture(body, true);
     }
   });
 
