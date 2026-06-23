@@ -13,6 +13,7 @@ interface Layer {
   y?: number;
   width?: number;
   height?: number;
+  opacity?: number;
   fontSize?: number;
   characters?: string;
   fills?: Array<{ type?: string }>;
@@ -25,13 +26,15 @@ const geoKey = (x: number, y: number, w: number, h: number): string =>
 interface AuxMaps {
   gradients: Map<string, GradientPaint>;
   zIndex: Map<string, number>;
+  opacity: Map<string, number>;
 }
 
-/** One DOM pass collecting what Builder's engine drops — CSS gradients and
- * stacking order — both keyed by absolute geometry for merging back later. */
+/** One DOM pass collecting what Builder's engine drops — CSS gradients, stacking
+ * order, and element opacity — keyed by absolute geometry for merging back. */
 function buildAuxMaps(root: Element): AuxMaps {
   const gradients = new Map<string, GradientPaint>();
   const zIndex = new Map<string, number>();
+  const opacity = new Map<string, number>();
   const elements: Element[] = [root, ...Array.from(root.querySelectorAll('*'))];
   for (const el of elements) {
     if (!(el instanceof HTMLElement)) continue;
@@ -55,8 +58,13 @@ function buildAuxMaps(root: Element): AuxMaps {
         : 0
       : raw * 10;
     if (effective !== 0 && !zIndex.has(key)) zIndex.set(key, effective);
+
+    const op = parseFloat(style.opacity);
+    if (!Number.isNaN(op) && op < 1 && !opacity.has(key)) {
+      opacity.set(key, op);
+    }
   }
-  return { gradients, zIndex };
+  return { gradients, zIndex, opacity };
 }
 
 /** Inject gradient fills into layers whose absolute geometry matches the map.
@@ -77,6 +85,22 @@ function applyGradients(
         layer.fills = [...(layer.fills ?? []), paint as { type?: string }];
       }
     }
+    if (layer.children) {
+      for (const child of layer.children) walk(child, absX, absY);
+    }
+  };
+  for (const layer of layers) walk(layer, 0, 0);
+}
+
+/** Builder's engine never sets element opacity, so semi-transparent elements
+ * (scrims, faded UI) render fully opaque. Merge captured opacity back in. */
+function applyOpacity(layers: Layer[], map: Map<string, number>): void {
+  if (map.size === 0) return;
+  const walk = (layer: Layer, offsetX: number, offsetY: number): void => {
+    const absX = offsetX + (layer.x ?? 0);
+    const absY = offsetY + (layer.y ?? 0);
+    const op = map.get(geoKey(absX, absY, layer.width ?? 0, layer.height ?? 0));
+    if (op !== undefined) layer.opacity = op;
     if (layer.children) {
       for (const child of layer.children) walk(child, absX, absY);
     }
@@ -302,6 +326,7 @@ async function capture(source: Element): Promise<void> {
       return;
     }
     applyGradients(layers, aux.gradients);
+    applyOpacity(layers, aux.opacity);
     reorderByZIndex(layers, aux.zIndex);
     addRunSpacing(layers);
     if (!options.includeImages) stripImages(layers);
