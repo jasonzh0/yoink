@@ -13,6 +13,8 @@ interface Layer {
   y?: number;
   width?: number;
   height?: number;
+  fontSize?: number;
+  characters?: string;
   fills?: Array<{ type?: string }>;
   children?: Layer[];
 }
@@ -20,22 +22,41 @@ interface Layer {
 const geoKey = (x: number, y: number, w: number, h: number): string =>
   `${Math.round(x)}:${Math.round(y)}:${Math.round(w)}:${Math.round(h)}`;
 
-/** Builder's engine ignores CSS gradients, so collect them ourselves keyed by
- * absolute geometry, to merge back into the matching layers afterward. */
-function buildGradientMap(root: Element): Map<string, GradientPaint> {
-  const map = new Map<string, GradientPaint>();
+interface AuxMaps {
+  gradients: Map<string, GradientPaint>;
+  zIndex: Map<string, number>;
+}
+
+/** One DOM pass collecting what Builder's engine drops — CSS gradients and
+ * stacking order — both keyed by absolute geometry for merging back later. */
+function buildAuxMaps(root: Element): AuxMaps {
+  const gradients = new Map<string, GradientPaint>();
+  const zIndex = new Map<string, number>();
   const elements: Element[] = [root, ...Array.from(root.querySelectorAll('*'))];
   for (const el of elements) {
     if (!(el instanceof HTMLElement)) continue;
-    const bg = getComputedStyle(el).backgroundImage;
-    if (!bg || bg.indexOf('gradient(') === -1) continue;
-    const paint = parseGradientFill(bg);
-    if (!paint) continue;
+    const style = getComputedStyle(el);
     const r = el.getBoundingClientRect();
     const key = geoKey(r.left, r.top, r.width, r.height);
-    if (!map.has(key)) map.set(key, paint);
+
+    const bg = style.backgroundImage;
+    if (bg && bg.indexOf('gradient(') !== -1) {
+      const paint = parseGradientFill(bg);
+      if (paint && !gradients.has(key)) gradients.set(key, paint);
+    }
+
+    // Effective paint order: explicit z dominates; among `auto`, positioned
+    // elements paint above static ones. Scaled so a positioned bump (1) never
+    // outranks a real z-index (×10).
+    const raw = parseInt(style.zIndex, 10);
+    const effective = Number.isNaN(raw)
+      ? style.position !== 'static'
+        ? 1
+        : 0
+      : raw * 10;
+    if (effective !== 0 && !zIndex.has(key)) zIndex.set(key, effective);
   }
-  return map;
+  return { gradients, zIndex };
 }
 
 /** Inject gradient fills into layers whose absolute geometry matches the map.
@@ -61,6 +82,79 @@ function applyGradients(
     }
   };
   for (const layer of layers) walk(layer, 0, 0);
+}
+
+/** Figma paints children in array order; Builder emits DOM order and ignores
+ * z-index, so lower content ends up covering higher. Reorder siblings by
+ * effective stacking (stable: equal z keeps DOM order). */
+function reorderByZIndex(layers: Layer[], zMap: Map<string, number>): void {
+  if (zMap.size === 0) return;
+  const sorted = (children: Layer[], offX: number, offY: number): Layer[] => {
+    const z = (c: Layer): number =>
+      zMap.get(
+        geoKey(offX + (c.x ?? 0), offY + (c.y ?? 0), c.width ?? 0, c.height ?? 0)
+      ) ?? 0;
+    return children
+      .map((c, i) => ({ c, i, z: z(c) }))
+      .sort((a, b) => a.z - b.z || a.i - b.i)
+      .map((o) => o.c);
+  };
+  const walk = (layer: Layer, offX: number, offY: number): void => {
+    const absX = offX + (layer.x ?? 0);
+    const absY = offY + (layer.y ?? 0);
+    if (layer.children && layer.children.length > 1) {
+      layer.children = sorted(layer.children, absX, absY);
+    }
+    if (layer.children) for (const c of layer.children) walk(c, absX, absY);
+  };
+  for (const layer of layers) walk(layer, 0, 0);
+
+  // Flat mode keeps siblings in the top-level array (the root stays first).
+  if (layers.length > 2) {
+    const [root, ...rest] = layers;
+    const ordered = sorted(rest, 0, 0);
+    layers.length = 0;
+    layers.push(root, ...ordered);
+  }
+}
+
+/** Builder splits styled text into separate runs and trims their whitespace, so
+ * adjacent runs on a line collide ("Grow"+"your money"). Nudge a run right by
+ * roughly one space when it butts against the previous run on the same line. */
+function addRunSpacing(layers: Layer[]): void {
+  const fixLine = (children: Layer[]): void => {
+    const texts = children
+      .filter((c) => c.type === 'TEXT' && typeof c.characters === 'string')
+      .slice()
+      .sort((a, b) => (a.y ?? 0) - (b.y ?? 0) || (a.x ?? 0) - (b.x ?? 0));
+
+    let shift = 0;
+    for (let i = 1; i < texts.length; i += 1) {
+      const prev = texts[i - 1];
+      const cur = texts[i];
+      const ph = prev.height ?? 0;
+      const ch = cur.height ?? 0;
+      const sameLine =
+        Math.abs((prev.y ?? 0) - (cur.y ?? 0)) < Math.min(ph, ch) * 0.6;
+      if (!sameLine) {
+        shift = 0;
+        continue;
+      }
+      cur.x = (cur.x ?? 0) + shift;
+      const gap = (cur.x ?? 0) - ((prev.x ?? 0) + (prev.width ?? 0));
+      if (gap > -6 && gap < 2) {
+        const space = (cur.fontSize ?? prev.fontSize ?? 16) * 0.3;
+        cur.x = (cur.x ?? 0) + space;
+        shift += space;
+      }
+    }
+  };
+  const walk = (layer: Layer): void => {
+    if (layer.children && layer.children.length > 1) fixLine(layer.children);
+    if (layer.children) layer.children.forEach(walk);
+  };
+  layers.forEach(walk);
+  if (layers.length > 1) fixLine(layers);
 }
 
 let options: CaptureOptions = resolveOptions({});
@@ -201,13 +295,15 @@ async function capture(source: Element): Promise<void> {
   let payload: string;
   let count: number;
   try {
-    const gradients = buildGradientMap(source);
+    const aux = buildAuxMaps(source);
     const layers = htmlToFigma(source as HTMLElement, useFrames) as Layer[];
     if (!layers || layers.length === 0) {
       showToast('Nothing to yoink there', 'error');
       return;
     }
-    applyGradients(layers, gradients);
+    applyGradients(layers, aux.gradients);
+    reorderByZIndex(layers, aux.zIndex);
+    addRunSpacing(layers);
     if (!options.includeImages) stripImages(layers);
     count = countLayers(layers);
     payload = JSON.stringify({
