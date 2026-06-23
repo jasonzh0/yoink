@@ -1,5 +1,7 @@
 import { htmlToFigma } from '@builder.io/html-to-figma';
 import { resolveOptions } from './constants';
+import { parseGradientFill } from './gradients';
+import type { GradientPaint } from './gradients';
 import { showToast, startPicker } from './picker';
 import { PAYLOAD_TAG } from './types';
 import type { CaptureOptions, PopupMessage, StoredState } from './types';
@@ -7,8 +9,58 @@ import type { CaptureOptions, PopupMessage, StoredState } from './types';
 interface Layer {
   type?: string;
   name?: string;
+  x?: number;
+  y?: number;
+  width?: number;
+  height?: number;
   fills?: Array<{ type?: string }>;
   children?: Layer[];
+}
+
+const geoKey = (x: number, y: number, w: number, h: number): string =>
+  `${Math.round(x)}:${Math.round(y)}:${Math.round(w)}:${Math.round(h)}`;
+
+/** Builder's engine ignores CSS gradients, so collect them ourselves keyed by
+ * absolute geometry, to merge back into the matching layers afterward. */
+function buildGradientMap(root: Element): Map<string, GradientPaint> {
+  const map = new Map<string, GradientPaint>();
+  const elements: Element[] = [root, ...Array.from(root.querySelectorAll('*'))];
+  for (const el of elements) {
+    if (!(el instanceof HTMLElement)) continue;
+    const bg = getComputedStyle(el).backgroundImage;
+    if (!bg || bg.indexOf('gradient(') === -1) continue;
+    const paint = parseGradientFill(bg);
+    if (!paint) continue;
+    const r = el.getBoundingClientRect();
+    const key = geoKey(r.left, r.top, r.width, r.height);
+    if (!map.has(key)) map.set(key, paint);
+  }
+  return map;
+}
+
+/** Inject gradient fills into layers whose absolute geometry matches the map.
+ * Layer coords are parent-relative (nested) or absolute (flat); accumulate. */
+function applyGradients(
+  layers: Layer[],
+  map: Map<string, GradientPaint>
+): void {
+  if (map.size === 0) return;
+  const walk = (layer: Layer, offsetX: number, offsetY: number): void => {
+    const absX = offsetX + (layer.x ?? 0);
+    const absY = offsetY + (layer.y ?? 0);
+    if (layer.type === 'FRAME' || layer.type === 'RECTANGLE') {
+      const paint = map.get(
+        geoKey(absX, absY, layer.width ?? 0, layer.height ?? 0)
+      );
+      if (paint) {
+        layer.fills = [...(layer.fills ?? []), paint as { type?: string }];
+      }
+    }
+    if (layer.children) {
+      for (const child of layer.children) walk(child, absX, absY);
+    }
+  };
+  for (const layer of layers) walk(layer, 0, 0);
 }
 
 let options: CaptureOptions = resolveOptions({});
@@ -149,11 +201,13 @@ async function capture(source: Element): Promise<void> {
   let payload: string;
   let count: number;
   try {
+    const gradients = buildGradientMap(source);
     const layers = htmlToFigma(source as HTMLElement, useFrames) as Layer[];
     if (!layers || layers.length === 0) {
       showToast('Nothing to yoink there', 'error');
       return;
     }
+    applyGradients(layers, gradients);
     if (!options.includeImages) stripImages(layers);
     count = countLayers(layers);
     payload = JSON.stringify({
