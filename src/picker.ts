@@ -6,10 +6,12 @@
  */
 const STYLE_ID = 'yoink-style';
 const OVERLAY_ID = 'yoink-overlay';
-const ACCENT = '#7b5cff';
-const ACCENT_SOFT = 'rgba(123,92,255,0.18)';
+const ACCENT = '#ff3b14';
+const ACCENT_SOFT = 'rgba(255,59,20,0.14)';
+const INK = '#16150f';
+const PAPER = '#ece6d6';
 const FONT =
-  "'Inter', 'Segoe UI', system-ui, -apple-system, BlinkMacSystemFont, sans-serif";
+  "'SF Mono', 'SFMono-Regular', ui-monospace, 'Cascadia Code', 'Roboto Mono', Menlo, Consolas, monospace";
 
 const prefersReducedMotion = (): boolean =>
   typeof window.matchMedia === 'function' &&
@@ -60,7 +62,7 @@ export function startPicker(onPick: (el: Element) => void): void {
   const highlight = div(`
     position: fixed; z-index: 2147483640; pointer-events: none;
     border: 2px solid ${ACCENT}; background: ${ACCENT_SOFT};
-    border-radius: 3px; box-shadow: 0 0 0 9999px rgba(10,8,20,0.32);
+    box-shadow: 0 0 0 9999px rgba(22,21,15,0.34);
     transition: ${reduced ? 'none' : 'all 0.06s linear'};
     top: 0; left: 0; width: 0; height: 0; opacity: 0;
   `);
@@ -68,23 +70,22 @@ export function startPicker(onPick: (el: Element) => void): void {
 
   const label = div(`
     position: fixed; z-index: 2147483641; pointer-events: none;
-    padding: 5px 9px; border-radius: 5px; max-width: 80vw;
-    background: ${ACCENT}; color: #fff; font: 600 12px/1.2 ${FONT};
-    letter-spacing: 0.01em; white-space: nowrap; overflow: hidden;
-    text-overflow: ellipsis; box-shadow: 0 4px 14px rgba(0,0,0,0.4);
+    padding: 4px 8px; max-width: 80vw;
+    background: ${INK}; color: ${PAPER}; font: 700 11px/1.2 ${FONT};
+    letter-spacing: 0.02em; white-space: nowrap; overflow: hidden;
+    text-overflow: ellipsis; box-shadow: 2px 2px 0 ${ACCENT};
     opacity: 0;
   `);
 
   const hint = div(`
     position: fixed; left: 50%; bottom: 22px; z-index: 2147483641;
     pointer-events: none; transform: translateX(-50%);
-    padding: 9px 16px; border-radius: 999px;
-    background: rgba(20,16,32,0.92); color: #efeaff;
-    font: 600 12.5px/1 ${FONT}; letter-spacing: 0.02em;
-    box-shadow: 0 8px 28px rgba(0,0,0,0.5);
-    border: 1px solid rgba(123,92,255,0.5);
+    padding: 9px 15px;
+    background: ${INK}; color: ${PAPER};
+    font: 700 11.5px/1 ${FONT}; letter-spacing: 0.08em; text-transform: uppercase;
+    box-shadow: 4px 4px 0 ${ACCENT}; border: 2px solid ${ACCENT};
   `);
-  hint.textContent = 'Click an element to yoink it  ·  Esc to cancel';
+  hint.textContent = 'Click to yoink  ·  Esc to cancel';
   if (!reduced) hint.style.animation = 'yk-rise 0.25s ease-out both';
 
   document.body.append(highlight, label, hint);
@@ -168,15 +169,15 @@ export function showToast(message: string, kind: 'success' | 'error'): void {
   const existing = document.getElementById('yoink-toast');
   if (existing) existing.remove();
 
-  const color = kind === 'success' ? ACCENT : '#ff5d6c';
+  const edge = kind === 'success' ? ACCENT : '#ffd000';
   const toast = div(`
     position: fixed; left: 50%; bottom: 24px; z-index: 2147483646;
     transform: translateX(-50%); pointer-events: none; max-width: 86vw;
-    padding: 11px 18px; border-radius: 999px;
-    background: rgba(18,14,28,0.96); color: #f4f1ff;
-    font: 600 13px/1.3 ${FONT}; letter-spacing: 0.01em; text-align: center;
-    border: 1px solid ${color};
-    box-shadow: 0 10px 34px rgba(0,0,0,0.55), 0 0 18px -6px ${color};
+    padding: 11px 16px;
+    background: ${INK}; color: ${PAPER};
+    font: 700 12px/1.3 ${FONT}; letter-spacing: 0.04em; text-align: center;
+    text-transform: uppercase; border: 2px solid ${edge};
+    box-shadow: 4px 4px 0 ${edge};
   `);
   toast.id = 'yoink-toast';
   toast.textContent = message;
