@@ -1,0 +1,12 @@
+{
+  "name": "Yoink",
+  "id": "yoink-web-to-figma",
+  "api": "1.0.0",
+  "main": "build/code.js",
+  "ui": "build/ui.html",
+  "editorType": ["figma"],
+  "networkAccess": {
+    "allowedDomains": ["*"],
+    "reasoning": "Fetches image URLs from the captured page so they can be placed as image fills on the rebuilt Figma layers."
+  }
+}

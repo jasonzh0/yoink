@@ -1,0 +1,16 @@
+{
+  "name": "yoink-figma-plugin",
+  "version": "1.0.0",
+  "description": "Rebuild a yoinked web scene as native Figma layers.",
+  "private": true,
+  "scripts": {
+    "watch": "node build.mjs --watch",
+    "build": "pnpm typecheck && node build.mjs",
+    "typecheck": "tsc --noEmit"
+  },
+  "devDependencies": {
+    "@figma/plugin-typings": "^1.109.0",
+    "esbuild": "^0.28.1",
+    "typescript": "^6.0.3"
+  }
+}

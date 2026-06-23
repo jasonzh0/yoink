@@ -1,0 +1,199 @@
+<style>
+  :root {
+    --bg: #0e0b1a;
+    --panel: rgba(30, 24, 52, 0.7);
+    --line: rgba(140, 116, 255, 0.18);
+    --violet: #7b5cff;
+    --violet-bright: #b9a6ff;
+    --pink: #ff5d9e;
+    --cyan: #46e6d0;
+    --text: #e7e1ff;
+    --text-dim: #9a8fc4;
+    --font: 'Inter', -apple-system, BlinkMacSystemFont, 'Segoe UI', sans-serif;
+  }
+  * {
+    margin: 0;
+    padding: 0;
+    box-sizing: border-box;
+  }
+  body {
+    font-family: var(--font);
+    background: var(--bg);
+    color: var(--text);
+    background-image: radial-gradient(
+      100% 60% at 0% -10%,
+      rgba(123, 92, 255, 0.22),
+      transparent 60%
+    );
+    padding: 16px;
+    height: 100vh;
+    display: flex;
+    flex-direction: column;
+    gap: 12px;
+  }
+  .header {
+    display: flex;
+    align-items: center;
+    gap: 10px;
+  }
+  .mark {
+    width: 34px;
+    height: 34px;
+    border-radius: 10px;
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    font-size: 19px;
+    background: linear-gradient(140deg, var(--violet), var(--pink));
+    box-shadow: 0 0 18px -6px var(--violet);
+  }
+  h1 {
+    font-size: 16px;
+    font-weight: 800;
+  }
+  .sub {
+    font-size: 11.5px;
+    color: var(--text-dim);
+    margin-top: 1px;
+  }
+  textarea {
+    flex: 1;
+    resize: none;
+    width: 100%;
+    background: var(--panel);
+    border: 1px solid var(--line);
+    border-radius: 10px;
+    color: var(--text);
+    font: 500 11px/1.4 ui-monospace, 'SF Mono', Menlo, monospace;
+    padding: 10px 12px;
+    outline: none;
+  }
+  textarea:focus {
+    border-color: rgba(140, 116, 255, 0.55);
+    box-shadow: 0 0 0 3px rgba(123, 92, 255, 0.18);
+  }
+  textarea::placeholder {
+    color: var(--text-dim);
+  }
+  .row {
+    display: flex;
+    gap: 8px;
+  }
+  button {
+    font-family: var(--font);
+    font-weight: 700;
+    font-size: 13px;
+    border: none;
+    border-radius: 9px;
+    padding: 11px 14px;
+    cursor: pointer;
+    transition: transform 0.15s ease, filter 0.15s ease;
+  }
+  button:hover {
+    transform: translateY(-1px);
+    filter: brightness(1.06);
+  }
+  button:active {
+    transform: translateY(0);
+  }
+  .build {
+    flex: 1;
+    color: #fff;
+    background: linear-gradient(135deg, var(--violet), var(--pink));
+    box-shadow: 0 0 22px -8px var(--violet);
+  }
+  .ghost {
+    color: var(--violet-bright);
+    background: rgba(123, 92, 255, 0.12);
+    border: 1px solid var(--line);
+  }
+  .status {
+    min-height: 15px;
+    font-size: 11.5px;
+    font-weight: 600;
+    text-align: center;
+    color: var(--text-dim);
+  }
+  .status.ok {
+    color: var(--cyan);
+  }
+  .status.err {
+    color: var(--pink);
+  }
+</style>
+
+<div class="header">
+  <div class="mark">🫳</div>
+  <div>
+    <h1>Yoink</h1>
+    <div class="sub">Paste a capture, build native layers.</div>
+  </div>
+</div>
+
+<textarea
+  id="input"
+  placeholder="Paste your Yoink capture here (⌘/Ctrl+V), then Build…"
+  spellcheck="false"
+></textarea>
+
+<div class="row">
+  <button class="ghost" id="paste" type="button">Paste</button>
+  <button class="build" id="build" type="button">Build in Figma</button>
+</div>
+<div class="status" id="status"></div>
+
+<script>
+  const input = document.getElementById('input');
+  const status = document.getElementById('status');
+
+  function setStatus(message, kind) {
+    status.textContent = message;
+    status.className = 'status' + (kind ? ' ' + kind : '');
+  }
+
+  function build() {
+    const raw = input.value.trim();
+    if (!raw) {
+      setStatus('Paste a Yoink capture first', 'err');
+      return;
+    }
+    let payload;
+    try {
+      payload = JSON.parse(raw);
+    } catch (e) {
+      setStatus('That is not valid JSON', 'err');
+      return;
+    }
+    setStatus('Building…');
+    parent.postMessage({ pluginMessage: { type: 'import', payload } }, '*');
+  }
+
+  document.getElementById('build').addEventListener('click', build);
+
+  document.getElementById('paste').addEventListener('click', async () => {
+    try {
+      const text = await navigator.clipboard.readText();
+      if (text) {
+        input.value = text;
+        build();
+      } else {
+        setStatus('Clipboard was empty', 'err');
+      }
+    } catch (e) {
+      input.focus();
+      setStatus('Press ⌘/Ctrl+V to paste, then Build', 'err');
+    }
+  });
+
+  onmessage = (event) => {
+    const msg = event.data.pluginMessage;
+    if (!msg) return;
+    if (msg.type === 'done') {
+      setStatus(`Built ${msg.count} root layer${msg.count === 1 ? '' : 's'} ✓`, 'ok');
+    } else if (msg.type === 'error') {
+      setStatus(msg.message || 'Something went wrong', 'err');
+    }
+  };
+
+  input.focus();
+</script>

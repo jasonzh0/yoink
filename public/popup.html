@@ -1,0 +1,389 @@
+<!DOCTYPE html>
+<html lang="en">
+  <head>
+    <meta charset="UTF-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+    <title>Yoink</title>
+    <style>
+      :root {
+        --bg: #0e0b1a;
+        --panel: rgba(30, 24, 52, 0.66);
+        --panel-line: rgba(140, 116, 255, 0.16);
+        --field: rgba(20, 16, 38, 0.8);
+        --violet: #7b5cff;
+        --violet-bright: #b9a6ff;
+        --pink: #ff5d9e;
+        --cyan: #46e6d0;
+        --gold: #ffc24b;
+        --text: #e7e1ff;
+        --text-dim: #9a8fc4;
+        --text-faint: #6b6196;
+        --ease: cubic-bezier(0.22, 1, 0.36, 1);
+        --font: 'Inter', 'Segoe UI', system-ui, -apple-system, sans-serif;
+        --glow: 0 0 24px -6px rgba(123, 92, 255, 0.7);
+      }
+
+      * {
+        margin: 0;
+        padding: 0;
+        box-sizing: border-box;
+      }
+
+      body {
+        font-family: var(--font);
+        width: 360px;
+        color: var(--text);
+        background-color: var(--bg);
+        background-image: radial-gradient(
+            100% 60% at 0% -10%,
+            rgba(123, 92, 255, 0.22),
+            transparent 60%
+          ),
+          radial-gradient(
+            90% 55% at 105% 0%,
+            rgba(255, 93, 158, 0.14),
+            transparent 60%
+          );
+        overflow-x: hidden;
+      }
+
+      .container {
+        position: relative;
+        padding: 20px 20px 16px;
+      }
+
+      .reveal {
+        opacity: 0;
+        animation: rise 0.5s var(--ease) forwards;
+      }
+      .d1 {
+        animation-delay: 0.02s;
+      }
+      .d2 {
+        animation-delay: 0.09s;
+      }
+      .d3 {
+        animation-delay: 0.16s;
+      }
+      .d4 {
+        animation-delay: 0.23s;
+      }
+
+      @keyframes rise {
+        from {
+          opacity: 0;
+          transform: translateY(9px);
+        }
+        to {
+          opacity: 1;
+          transform: translateY(0);
+        }
+      }
+
+      .header {
+        display: flex;
+        align-items: center;
+        gap: 13px;
+        margin-bottom: 6px;
+      }
+
+      .mark {
+        width: 46px;
+        height: 46px;
+        flex-shrink: 0;
+        border-radius: 13px;
+        display: flex;
+        align-items: center;
+        justify-content: center;
+        font-size: 26px;
+        background: linear-gradient(140deg, var(--violet), var(--pink));
+        box-shadow: var(--glow), inset 0 1px 0 rgba(255, 255, 255, 0.25);
+      }
+
+      .titles h1 {
+        font-size: 22px;
+        font-weight: 800;
+        letter-spacing: -0.01em;
+        line-height: 1;
+        background: linear-gradient(100deg, var(--violet-bright), #fff 60%);
+        -webkit-background-clip: text;
+        background-clip: text;
+        -webkit-text-fill-color: transparent;
+      }
+
+      .titles p {
+        margin-top: 5px;
+        font-size: 12px;
+        font-weight: 500;
+        letter-spacing: 0.01em;
+        color: var(--text-dim);
+      }
+
+      .actions {
+        margin-top: 18px;
+        display: flex;
+        flex-direction: column;
+        gap: 9px;
+      }
+
+      .btn {
+        position: relative;
+        width: 100%;
+        padding: 13px 16px;
+        border: none;
+        border-radius: 11px;
+        font-family: var(--font);
+        font-weight: 700;
+        font-size: 14px;
+        letter-spacing: 0.01em;
+        cursor: pointer;
+        display: flex;
+        align-items: center;
+        justify-content: center;
+        gap: 9px;
+        transition: transform 0.2s var(--ease), box-shadow 0.2s var(--ease),
+          filter 0.2s var(--ease);
+      }
+
+      .btn .ico {
+        font-size: 16px;
+      }
+
+      .btn-primary {
+        color: #fff;
+        background: linear-gradient(135deg, var(--violet), var(--pink));
+        box-shadow: var(--glow), inset 0 1px 0 rgba(255, 255, 255, 0.22);
+      }
+
+      .btn-primary:hover {
+        transform: translateY(-1px);
+        box-shadow: 0 0 30px -4px rgba(123, 92, 255, 0.85),
+          inset 0 1px 0 rgba(255, 255, 255, 0.3);
+        filter: brightness(1.05);
+      }
+
+      .btn-ghost {
+        color: var(--violet-bright);
+        background: rgba(123, 92, 255, 0.1);
+        border: 1px solid var(--panel-line);
+      }
+
+      .btn-ghost:hover {
+        color: #fff;
+        border-color: rgba(140, 116, 255, 0.5);
+        box-shadow: var(--glow);
+        transform: translateY(-1px);
+      }
+
+      .btn:active {
+        transform: translateY(0);
+      }
+
+      .status {
+        min-height: 16px;
+        margin-top: 11px;
+        text-align: center;
+        font-size: 12px;
+        font-weight: 500;
+        letter-spacing: 0.01em;
+        color: var(--text-dim);
+      }
+      .status.success {
+        color: var(--cyan);
+      }
+      .status.error {
+        color: var(--pink);
+      }
+
+      .panel {
+        margin-top: 16px;
+        padding: 6px 16px 14px;
+        background: var(--panel);
+        border: 1px solid var(--panel-line);
+        border-radius: 13px;
+        backdrop-filter: blur(8px);
+      }
+
+      .panel-label {
+        display: block;
+        margin: 12px 0 4px;
+        font-size: 10.5px;
+        font-weight: 700;
+        letter-spacing: 0.18em;
+        text-transform: uppercase;
+        color: var(--text-faint);
+      }
+
+      .opt {
+        display: flex;
+        align-items: center;
+        justify-content: space-between;
+        gap: 14px;
+        padding: 11px 0;
+        border-bottom: 1px solid var(--panel-line);
+      }
+      .opt:last-child {
+        border-bottom: none;
+      }
+
+      .opt-copy .name {
+        font-size: 13.5px;
+        font-weight: 600;
+        color: var(--text);
+      }
+      .opt-copy .desc {
+        margin-top: 2px;
+        font-size: 11.5px;
+        color: var(--text-dim);
+        line-height: 1.35;
+      }
+
+      .switch {
+        position: relative;
+        flex-shrink: 0;
+        width: 44px;
+        height: 24px;
+        border-radius: 13px;
+        border: 1px solid var(--panel-line);
+        background: var(--field);
+        cursor: pointer;
+        transition: background 0.25s var(--ease), border-color 0.25s var(--ease);
+      }
+      .switch-thumb {
+        position: absolute;
+        top: 50%;
+        left: 3px;
+        width: 16px;
+        height: 16px;
+        border-radius: 50%;
+        background: var(--text-faint);
+        transform: translate(0, -50%);
+        transition: transform 0.26s var(--ease), background 0.26s var(--ease);
+      }
+      .switch[aria-checked='true'] {
+        background: linear-gradient(135deg, var(--violet), var(--pink));
+        border-color: transparent;
+        box-shadow: var(--glow);
+      }
+      .switch[aria-checked='true'] .switch-thumb {
+        transform: translate(20px, -50%);
+        background: #fff;
+      }
+      .switch:focus-visible {
+        outline: none;
+        box-shadow: 0 0 0 3px rgba(123, 92, 255, 0.3);
+      }
+
+      .hint {
+        margin-top: 13px;
+        padding: 11px 13px;
+        border-radius: 10px;
+        background: rgba(70, 230, 208, 0.07);
+        border: 1px solid rgba(70, 230, 208, 0.22);
+        font-size: 12px;
+        line-height: 1.45;
+        color: var(--text-dim);
+      }
+      .hint b {
+        color: var(--cyan);
+        font-weight: 700;
+      }
+
+      .footer {
+        margin-top: 14px;
+        text-align: center;
+        font-size: 10px;
+        font-weight: 600;
+        letter-spacing: 0.18em;
+        text-transform: uppercase;
+        color: var(--text-faint);
+      }
+      .footer .v {
+        color: var(--violet);
+      }
+
+      @media (prefers-reduced-motion: reduce) {
+        *,
+        *::before,
+        *::after {
+          animation-duration: 0.001ms !important;
+          transition-duration: 0.001ms !important;
+        }
+        .reveal {
+          opacity: 1;
+        }
+      }
+    </style>
+  </head>
+
+  <body>
+    <div class="container">
+      <header class="header reveal d1">
+        <div class="mark" aria-hidden="true">🫳</div>
+        <div class="titles">
+          <h1>Yoink</h1>
+          <p>Grab any HTML, paste it into Figma.</p>
+        </div>
+      </header>
+
+      <div class="actions reveal d2">
+        <button id="pickBtn" class="btn btn-primary" type="button">
+          <span class="ico" aria-hidden="true">⌖</span> Pick an element
+        </button>
+        <button id="pageBtn" class="btn btn-ghost" type="button">
+          <span class="ico" aria-hidden="true">▢</span> Yoink whole page
+        </button>
+        <div id="status" class="status" role="status" aria-live="polite"></div>
+      </div>
+
+      <div class="panel reveal d3">
+        <span class="panel-label">Capture options</span>
+
+        <div class="opt">
+          <div class="opt-copy">
+            <div class="name">Nest in frames</div>
+            <div class="desc">Rebuild the DOM tree as nested frames.</div>
+          </div>
+          <button
+            id="useFramesToggle"
+            class="switch"
+            type="button"
+            role="switch"
+            aria-checked="true"
+            aria-label="Nest in frames"
+          >
+            <span class="switch-thumb"></span>
+          </button>
+        </div>
+
+        <div class="opt">
+          <div class="opt-copy">
+            <div class="name">Include images</div>
+            <div class="desc">Bring &lt;img&gt; in as image fills by URL.</div>
+          </div>
+          <button
+            id="includeImagesToggle"
+            class="switch"
+            type="button"
+            role="switch"
+            aria-checked="true"
+            aria-label="Include images"
+          >
+            <span class="switch-thumb"></span>
+          </button>
+        </div>
+      </div>
+
+      <div class="hint reveal d3">
+        Yoinked layers land on your clipboard. In Figma, run the
+        <b>Yoink</b> plugin → <b>Paste &amp; build</b>.
+      </div>
+
+      <div class="footer reveal d4">
+        Yoink <span class="v">// v<span id="versionNumber">…</span></span>
+      </div>
+    </div>
+
+    <script src="popup.js"></script>
+  </body>
+</html>

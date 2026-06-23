@@ -1,0 +1,25 @@
+{
+  "manifest_version": 3,
+  "name": "Yoink — Grab any page as HTML for Figma",
+  "version": "1.0.0",
+  "minimum_chrome_version": "120",
+  "permissions": ["storage", "activeTab", "scripting", "clipboardWrite"],
+  "description": "Point at any element or grab the whole page, and yoink it as self-contained HTML — ready to paste into Figma via html.to.design.",
+  "background": {
+    "service_worker": "background.js"
+  },
+  "action": {
+    "default_title": "Yoink",
+    "default_popup": "popup.html"
+  },
+  "content_scripts": [
+    {
+      "matches": ["<all_urls>"],
+      "run_at": "document_idle",
+      "js": ["contentScript.js"]
+    }
+  ],
+  "content_security_policy": {
+    "extension_pages": "script-src 'self'; object-src 'self'; style-src 'self' 'unsafe-inline'; img-src 'self' data:; font-src 'self'; connect-src 'none'"
+  }
+}
