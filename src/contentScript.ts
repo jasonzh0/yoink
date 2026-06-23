@@ -262,13 +262,7 @@ const nextPaint = (): Promise<void> =>
 const delay = (ms: number): Promise<void> =>
   new Promise((resolve) => window.setTimeout(resolve, ms));
 
-/**
- * Lazy-loaded images (very common on Webflow/marketing sites) have no `src`
- * until scrolled into view, so a capture would grab them empty. Force eager
- * loading, scroll the whole page to trip IntersectionObserver-based loaders,
- * then wait for the images in `root` to finish (bounded so we never hang).
- */
-async function prepareLazyContent(root: Element): Promise<void> {
+const eagerLoadImages = (): void => {
   for (const img of Array.from(document.images)) {
     if (img.loading === 'lazy') img.loading = 'eager';
     const dataSrc = img.getAttribute('data-src');
@@ -276,29 +270,58 @@ async function prepareLazyContent(root: Element): Promise<void> {
     const dataSrcset = img.getAttribute('data-srcset');
     if (dataSrcset && !img.srcset) img.srcset = dataSrcset;
   }
+};
+
+/** Wait for every image to finish (bounded), so none is captured empty. */
+const waitForImages = (timeout: number): Promise<unknown> =>
+  Promise.all(
+    Array.from(document.images)
+      .filter((img) => !img.complete)
+      .map((img) =>
+        Promise.race([
+          new Promise<void>((resolve) => {
+            img.addEventListener('load', () => resolve(), { once: true });
+            img.addEventListener('error', () => resolve(), { once: true });
+          }),
+          delay(timeout),
+        ])
+      )
+  );
+
+/**
+ * Marketing sites (Webflow et al.) lazy-load images and reveal sections via
+ * IntersectionObserver on scroll, so a quick capture grabs empty/half-built
+ * content. Be patient: load fonts, scroll the whole page in small steps so every
+ * section gets revealed and its assets requested, then settle and wait for
+ * images — twice, since a second pass catches anything the first kicked off.
+ */
+async function prepareLazyContent(): Promise<void> {
+  eagerLoadImages();
+
+  try {
+    await Promise.race([document.fonts.ready, delay(2500)]);
+  } catch {
+    /* fonts API unavailable — continue */
+  }
 
   const startX = window.scrollX;
   const startY = window.scrollY;
-  const docHeight = document.documentElement.scrollHeight;
-  const step = Math.max(1, window.innerHeight);
-  for (let y = 0; y < docHeight; y += step) {
-    window.scrollTo(0, y);
-    await delay(50);
-  }
-  window.scrollTo(startX, startY);
 
-  const pending = Array.from(root.querySelectorAll('img'))
-    .filter((img) => !img.complete)
-    .map((img) =>
-      Promise.race([
-        new Promise<void>((resolve) => {
-          img.addEventListener('load', () => resolve(), { once: true });
-          img.addEventListener('error', () => resolve(), { once: true });
-        }),
-        delay(2500),
-      ])
-    );
-  await Promise.all(pending);
+  for (let pass = 0; pass < 2; pass += 1) {
+    const docHeight = document.documentElement.scrollHeight;
+    const step = Math.max(200, Math.round(window.innerHeight * 0.6));
+    for (let y = 0; y <= docHeight; y += step) {
+      window.scrollTo(0, y);
+      await delay(130);
+    }
+    eagerLoadImages();
+    await waitForImages(3500);
+  }
+
+  // Back to the top and let reveal animations settle before we read the DOM.
+  window.scrollTo(startX, startY);
+  await delay(600);
+  await waitForImages(2000);
 }
 
 async function capture(source: Element): Promise<void> {
@@ -308,9 +331,11 @@ async function capture(source: Element): Promise<void> {
     return;
   }
 
+  showToast('Loading page…', 'success');
+  await nextPaint();
+  await prepareLazyContent();
   showToast('Yoinking…', 'success');
   await nextPaint();
-  await prepareLazyContent(source);
 
   let useFrames = options.useFrames;
   const flattened = useFrames && total > FLATTEN_ABOVE;
