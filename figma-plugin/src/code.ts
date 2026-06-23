@@ -66,7 +66,19 @@ function assign(node: SceneNode, layer: Layer): void {
   }
 }
 
-/** Resolve IMAGE fills (which carry a `url`) into Figma image hashes. */
+async function loadImage(url: string): Promise<Image | null> {
+  for (let attempt = 0; attempt < 2; attempt += 1) {
+    try {
+      return await figma.createImageAsync(url);
+    } catch (error) {
+      if (attempt === 1) console.warn('Yoink: image failed →', url, error);
+    }
+  }
+  return null;
+}
+
+/** Resolve IMAGE fills (which carry a `url`) into Figma image hashes. On
+ * failure, leave a visible labeled placeholder rather than a silent blank. */
 async function resolveImageFills(layer: Layer): Promise<void> {
   if (!Array.isArray(layer.fills)) return;
   const resolved: Array<Record<string, unknown>> = [];
@@ -74,15 +86,17 @@ async function resolveImageFills(layer: Layer): Promise<void> {
     if (fill && fill.type === 'IMAGE') {
       const url = typeof fill.url === 'string' ? fill.url : '';
       if (!url) continue;
-      try {
-        const image = await figma.createImageAsync(url);
+      const image = await loadImage(url);
+      if (image) {
         resolved.push({
           type: 'IMAGE',
           scaleMode: fill.scaleMode || 'FILL',
           imageHash: image.hash,
         });
-      } catch (error) {
-        console.warn('Yoink: image failed', url, error);
+      } else {
+        resolved.push({ type: 'SOLID', color: { r: 0.8, g: 0.8, b: 0.82 } });
+        const prev = typeof layer.name === 'string' ? layer.name : '';
+        layer.name = `${prev} ⚠ image-failed`.trim();
       }
     } else if (fill) {
       resolved.push(fill);
