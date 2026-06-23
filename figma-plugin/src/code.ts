@@ -130,10 +130,40 @@ async function createNode(layer: Layer): Promise<SceneNode | null> {
     assign(text, layer);
     text.resize(size(layer.width), size(layer.height));
     text.textAutoResize = 'HEIGHT';
+    fitText(text, layer);
     return text;
   }
 
   return null;
+}
+
+/**
+ * The page's web font usually isn't available in Figma, so text is rebuilt in a
+ * fallback whose metrics differ — overflowing its box and wrapping/clipping.
+ * Shrink the font size until the text fits (capped at ~30% so we never mangle).
+ */
+function fitText(text: TextNode, layer: Layer): void {
+  const targetW = typeof layer.width === 'number' ? layer.width : text.width;
+  const targetH = typeof layer.height === 'number' ? layer.height : text.height;
+  const lineHeight = layer.lineHeight;
+  const lh =
+    lineHeight && typeof lineHeight === 'object' && 'value' in lineHeight
+      ? Number((lineHeight as { value: number }).value)
+      : targetH;
+  const baseSize = typeof layer.fontSize === 'number' ? layer.fontSize : 16;
+
+  let adjustments = 0;
+  while (
+    typeof text.fontSize === 'number' &&
+    (text.height > Math.max(targetH, lh) * 1.2 || text.width > targetW * 1.2)
+  ) {
+    if (adjustments++ > baseSize * 0.3) break;
+    try {
+      text.fontSize = (text.fontSize as number) - 1;
+    } catch {
+      break;
+    }
+  }
 }
 
 let builtCount = 0;
