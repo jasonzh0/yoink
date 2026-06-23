@@ -48,19 +48,23 @@ function buildAuxMaps(root: Element): AuxMaps {
       if (paint && !gradients.has(key)) gradients.set(key, paint);
     }
 
-    // Effective paint order: explicit z dominates; among `auto`, positioned
-    // elements paint above static ones. Scaled so a positioned bump (1) never
-    // outranks a real z-index (×10).
+    // Only reorder by an EXPLICIT z-index. Don't bump positioned-auto elements
+    // above static ones: a card's absolute background layer is meant to sit
+    // *behind* its content, and DOM order (which Builder preserves) already
+    // gets the common "background first, content after" case right.
     const raw = parseInt(style.zIndex, 10);
-    const effective = Number.isNaN(raw)
-      ? style.position !== 'static'
-        ? 1
-        : 0
-      : raw * 10;
-    if (effective !== 0 && !zIndex.has(key)) zIndex.set(key, effective);
+    if (!Number.isNaN(raw) && raw !== 0 && !zIndex.has(key)) {
+      zIndex.set(key, raw);
+    }
 
+    // Record deliberate translucency (scrims, faded UI) but ignore near-zero
+    // values. Scroll-reveal and scroll-linked-fade elements sit at ~0 opacity
+    // until on-screen, and a whole-page capture scrolls past them then reads
+    // before they settle — so the page's hero/sections read as 0.0–0.05 mid
+    // -flight. Emitting that hides content the user plainly sees, so treat
+    // anything below VISIBLE_FLOOR as fully opaque.
     const op = parseFloat(style.opacity);
-    if (!Number.isNaN(op) && op < 1 && !opacity.has(key)) {
+    if (!Number.isNaN(op) && op >= VISIBLE_FLOOR && op < 1 && !opacity.has(key)) {
       opacity.set(key, op);
     }
   }
