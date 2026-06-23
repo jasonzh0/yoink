@@ -89,6 +89,48 @@ const nextPaint = (): Promise<void> =>
     requestAnimationFrame(() => requestAnimationFrame(() => resolve()))
   );
 
+const delay = (ms: number): Promise<void> =>
+  new Promise((resolve) => window.setTimeout(resolve, ms));
+
+/**
+ * Lazy-loaded images (very common on Webflow/marketing sites) have no `src`
+ * until scrolled into view, so a capture would grab them empty. Force eager
+ * loading, scroll the whole page to trip IntersectionObserver-based loaders,
+ * then wait for the images in `root` to finish (bounded so we never hang).
+ */
+async function prepareLazyContent(root: Element): Promise<void> {
+  for (const img of Array.from(document.images)) {
+    if (img.loading === 'lazy') img.loading = 'eager';
+    const dataSrc = img.getAttribute('data-src');
+    if (dataSrc && !img.currentSrc) img.src = dataSrc;
+    const dataSrcset = img.getAttribute('data-srcset');
+    if (dataSrcset && !img.srcset) img.srcset = dataSrcset;
+  }
+
+  const startX = window.scrollX;
+  const startY = window.scrollY;
+  const docHeight = document.documentElement.scrollHeight;
+  const step = Math.max(1, window.innerHeight);
+  for (let y = 0; y < docHeight; y += step) {
+    window.scrollTo(0, y);
+    await delay(50);
+  }
+  window.scrollTo(startX, startY);
+
+  const pending = Array.from(root.querySelectorAll('img'))
+    .filter((img) => !img.complete)
+    .map((img) =>
+      Promise.race([
+        new Promise<void>((resolve) => {
+          img.addEventListener('load', () => resolve(), { once: true });
+          img.addEventListener('error', () => resolve(), { once: true });
+        }),
+        delay(2500),
+      ])
+    );
+  await Promise.all(pending);
+}
+
 async function capture(source: Element): Promise<void> {
   const total = source.querySelectorAll('*').length;
   if (total > REFUSE_ABOVE) {
@@ -98,6 +140,7 @@ async function capture(source: Element): Promise<void> {
 
   showToast('Yoinking…', 'success');
   await nextPaint();
+  await prepareLazyContent(source);
 
   let useFrames = options.useFrames;
   const flattened = useFrames && total > FLATTEN_ABOVE;
