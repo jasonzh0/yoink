@@ -9,6 +9,8 @@ interface Layer {
   height?: number;
   svg?: string;
   fontFamily?: string;
+  fontWeight?: number;
+  fontStyle?: string;
   fills?: Array<Record<string, unknown>>;
   children?: Layer[];
   [key: string]: unknown;
@@ -29,26 +31,83 @@ const SKIP_KEYS = new Set([
   'svg',
   'data',
   'fontFamily',
+  'fontWeight',
+  'fontStyle',
   'url',
 ]);
 
 const normalizeName = (str: string): string =>
   str.toLowerCase().replace(/[^a-z]/gi, '');
 
+// Figma encodes weight + slant in a free-text style name ("SemiBold Italic").
+// Map those names to an approximate CSS numeric weight so we can score the
+// closest available style against the captured one. Order matters: compound
+// names ("extra bold", "semi bold") must be tested before bare "bold".
+const WEIGHT_NAMES: Array<[RegExp, number]> = [
+  [/thin|hairline/, 100],
+  [/extra\s*light|ultra\s*light/, 200],
+  [/demi\s*light|semi\s*light/, 350],
+  [/light/, 300],
+  [/medium/, 500],
+  [/semi\s*bold|demi\s*bold/, 600],
+  [/extra\s*bold|ultra\s*bold/, 800],
+  [/black|heavy|fat|poster/, 900],
+  [/bold/, 700],
+  [/book|roman|normal|regular/, 400],
+];
+
+function styleToWeight(style: string): { weight: number; italic: boolean } {
+  const s = style.toLowerCase();
+  let weight = 400;
+  for (const [re, w] of WEIGHT_NAMES) {
+    if (re.test(s)) {
+      weight = w;
+      break;
+    }
+  }
+  return { weight, italic: /italic|oblique/.test(s) };
+}
+
 const fontCache: Record<string, FontName> = {};
 let availableFonts: Font[] = [];
 
-async function getMatchingFont(fontStr: string): Promise<FontName> {
+/** Resolve a CSS font stack + captured weight/italic to an installed Figma
+ * font. Walks the stack until a family is installed, then picks the style whose
+ * weight is closest (matching slant first). The page's actual web font usually
+ * isn't installed, so this commonly falls through to DEFAULT_FONT — but when
+ * the family IS present (system fonts, fonts the user has) the weight sticks. */
+async function getMatchingFont(
+  fontStr: string,
+  weight: number,
+  italic: boolean
+): Promise<FontName> {
+  const cacheKey = `${fontStr}|${weight}|${italic ? 'i' : 'n'}`;
+  if (fontCache[cacheKey]) return fontCache[cacheKey];
+
   for (const family of fontStr.split(/\s*,\s*/)) {
     const norm = normalizeName(family);
-    if (fontCache[norm]) return fontCache[norm];
-    for (const available of availableFonts) {
-      if (normalizeName(available.fontName.family) === norm) {
-        await figma.loadFontAsync(available.fontName);
-        fontCache[norm] = available.fontName;
-        return available.fontName;
+    if (!norm) continue;
+    const styles = availableFonts.filter(
+      (f) => normalizeName(f.fontName.family) === norm
+    );
+    if (styles.length === 0) continue;
+
+    let best = styles[0].fontName;
+    let bestScore = Infinity;
+    for (const f of styles) {
+      const parsed = styleToWeight(f.fontName.style);
+      // Heavily penalize a slant mismatch so weight never wins over italic.
+      const score =
+        Math.abs(parsed.weight - weight) +
+        (parsed.italic === italic ? 0 : 1000);
+      if (score < bestScore) {
+        bestScore = score;
+        best = f.fontName;
       }
     }
+    await figma.loadFontAsync(best);
+    fontCache[cacheKey] = best;
+    return best;
   }
   return DEFAULT_FONT;
 }
@@ -138,9 +197,11 @@ async function createNode(layer: Layer): Promise<SceneNode | null> {
 
   if (layer.type === 'TEXT') {
     const text = figma.createText();
-    text.fontName = layer.fontFamily
-      ? await getMatchingFont(layer.fontFamily)
-      : DEFAULT_FONT;
+    text.fontName = await getMatchingFont(
+      layer.fontFamily || 'Roboto',
+      layer.fontWeight ?? 400,
+      layer.fontStyle === 'italic'
+    );
     assign(text, layer);
     text.resize(size(layer.width), size(layer.height));
     text.textAutoResize = 'HEIGHT';
@@ -206,9 +267,8 @@ const canContain = (node: SceneNode): node is SceneNode & ChildrenMixin =>
   'appendChild' in node;
 
 async function importPayload(payload: Payload): Promise<number> {
-  availableFonts = (await figma.listAvailableFontsAsync()).filter(
-    (font) => font.fontName.style === 'Regular'
-  );
+  // Keep every style (not just Regular) so weight/italic matching has options.
+  availableFonts = await figma.listAvailableFontsAsync();
   await figma.loadFontAsync(DEFAULT_FONT);
 
   const layers = payload.layers ?? [];
@@ -219,8 +279,7 @@ async function importPayload(payload: Payload): Promise<number> {
   // The first layer is the root container. In nested mode it carries the whole
   // tree; in flat mode the remaining top-level layers are its children.
   const root = await buildTree(layers[0], figma.currentPage);
-  const container =
-    root && canContain(root) ? root : figma.currentPage;
+  const container = root && canContain(root) ? root : figma.currentPage;
   for (let i = 1; i < layers.length; i += 1) {
     await buildTree(layers[i], container);
   }

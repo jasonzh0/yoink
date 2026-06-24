@@ -15,6 +15,8 @@ interface Layer {
   height?: number;
   opacity?: number;
   fontSize?: number;
+  fontWeight?: number;
+  fontStyle?: string;
   characters?: string;
   fills?: Array<{ type?: string }>;
   children?: Layer[];
@@ -23,18 +25,69 @@ interface Layer {
 const geoKey = (x: number, y: number, w: number, h: number): string =>
   `${Math.round(x)}:${Math.round(y)}:${Math.round(w)}:${Math.round(h)}`;
 
+// Opacity at or above this is treated as deliberate translucency; anything
+// below is assumed to be a mid-scroll reveal animation caught before it
+// settled, and is read as fully opaque rather than hiding visible content.
+const VISIBLE_FLOOR = 0.05;
+
+interface FontStyle {
+  weight: number;
+  italic: boolean;
+}
+
 interface AuxMaps {
   gradients: Map<string, GradientPaint>;
   zIndex: Map<string, number>;
   opacity: Map<string, number>;
+  fontStyles: Map<string, FontStyle>;
+}
+
+/** Builder's engine captures only fontFamily + fontSize for text, dropping
+ * weight and italic — so bold headings and light captions all rebuild as
+ * Regular in Figma. Re-read those per text node, keyed by the SAME geometry
+ * Builder assigns each TEXT layer (a Range bounding rect, with its line-height
+ * adjustment), so the plugin can pick the right family + style.
+ *
+ * Mirrors Builder's buildTextNode: range over the text node, adjust the rect up
+ * to line-height, drop sub-pixel runs. Keys must match exactly or the merge
+ * misses, so keep this in lockstep with the engine's text geometry. */
+function buildFontStyles(root: Element, into: Map<string, FontStyle>): void {
+  const walker = document.createTreeWalker(root, NodeFilter.SHOW_TEXT, null);
+  let node: Node | null;
+  while ((node = walker.nextNode())) {
+    if (!node.textContent || !node.textContent.trim()) continue;
+    const parent = node.parentElement;
+    if (!parent) continue;
+    const style = getComputedStyle(parent);
+    const range = document.createRange();
+    range.selectNode(node);
+    const rect = range.getBoundingClientRect();
+    range.detach();
+    let top = rect.top;
+    let height = rect.height;
+    const lineHeight = parseFloat(style.lineHeight); // px, or NaN for "normal"
+    if (!Number.isNaN(lineHeight) && height < lineHeight) {
+      top -= (lineHeight - height) / 2;
+      height = lineHeight;
+    }
+    if (height < 1 || rect.width < 1) continue;
+    const key = geoKey(rect.left, top, rect.width, height);
+    if (into.has(key)) continue;
+    const weight = parseInt(style.fontWeight, 10);
+    into.set(key, {
+      weight: Number.isNaN(weight) ? 400 : weight,
+      italic: /italic|oblique/.test(style.fontStyle),
+    });
+  }
 }
 
 /** One DOM pass collecting what Builder's engine drops — CSS gradients, stacking
- * order, and element opacity — keyed by absolute geometry for merging back. */
+ * order, element opacity, and font weight/style — keyed by absolute geometry. */
 function buildAuxMaps(root: Element): AuxMaps {
   const gradients = new Map<string, GradientPaint>();
   const zIndex = new Map<string, number>();
   const opacity = new Map<string, number>();
+  const fontStyles = new Map<string, FontStyle>();
   const elements: Element[] = [root, ...Array.from(root.querySelectorAll('*'))];
   for (const el of elements) {
     if (!(el instanceof HTMLElement)) continue;
@@ -64,11 +117,17 @@ function buildAuxMaps(root: Element): AuxMaps {
     // -flight. Emitting that hides content the user plainly sees, so treat
     // anything below VISIBLE_FLOOR as fully opaque.
     const op = parseFloat(style.opacity);
-    if (!Number.isNaN(op) && op >= VISIBLE_FLOOR && op < 1 && !opacity.has(key)) {
+    if (
+      !Number.isNaN(op) &&
+      op >= VISIBLE_FLOOR &&
+      op < 1 &&
+      !opacity.has(key)
+    ) {
       opacity.set(key, op);
     }
   }
-  return { gradients, zIndex, opacity };
+  buildFontStyles(root, fontStyles);
+  return { gradients, zIndex, opacity, fontStyles };
 }
 
 /** Inject gradient fills into layers whose absolute geometry matches the map.
@@ -112,6 +171,29 @@ function applyOpacity(layers: Layer[], map: Map<string, number>): void {
   for (const layer of layers) walk(layer, 0, 0);
 }
 
+/** Merge captured font weight/italic back onto TEXT layers by absolute geometry
+ * (same keying as applyOpacity). The plugin maps these to a Figma font style. */
+function applyFontStyles(layers: Layer[], map: Map<string, FontStyle>): void {
+  if (map.size === 0) return;
+  const walk = (layer: Layer, offsetX: number, offsetY: number): void => {
+    const absX = offsetX + (layer.x ?? 0);
+    const absY = offsetY + (layer.y ?? 0);
+    if (layer.type === 'TEXT') {
+      const info = map.get(
+        geoKey(absX, absY, layer.width ?? 0, layer.height ?? 0)
+      );
+      if (info) {
+        layer.fontWeight = info.weight;
+        if (info.italic) layer.fontStyle = 'italic';
+      }
+    }
+    if (layer.children) {
+      for (const child of layer.children) walk(child, absX, absY);
+    }
+  };
+  for (const layer of layers) walk(layer, 0, 0);
+}
+
 /** Figma paints children in array order; Builder emits DOM order and ignores
  * z-index, so lower content ends up covering higher. Reorder siblings by
  * effective stacking (stable: equal z keeps DOM order). */
@@ -120,7 +202,12 @@ function reorderByZIndex(layers: Layer[], zMap: Map<string, number>): void {
   const sorted = (children: Layer[], offX: number, offY: number): Layer[] => {
     const z = (c: Layer): number =>
       zMap.get(
-        geoKey(offX + (c.x ?? 0), offY + (c.y ?? 0), c.width ?? 0, c.height ?? 0)
+        geoKey(
+          offX + (c.x ?? 0),
+          offY + (c.y ?? 0),
+          c.width ?? 0,
+          c.height ?? 0
+        )
       ) ?? 0;
     return children
       .map((c, i) => ({ c, i, z: z(c) }))
@@ -300,7 +387,10 @@ const waitForImages = (scope: ParentNode, timeout: number): Promise<unknown> =>
  * settling. A picked element is already on screen, so we skip the page scroll
  * entirely (it's pointless and jarring) and just ensure its own images load.
  */
-async function prepareLazyContent(root: Element, fullPage: boolean): Promise<void> {
+async function prepareLazyContent(
+  root: Element,
+  fullPage: boolean
+): Promise<void> {
   if (!fullPage) {
     eagerLoadImages(root);
     await waitForImages(root, 2500);
@@ -364,6 +454,7 @@ async function capture(source: Element, fullPage: boolean): Promise<void> {
     }
     applyGradients(layers, aux.gradients);
     applyOpacity(layers, aux.opacity);
+    applyFontStyles(layers, aux.fontStyles);
     reorderByZIndex(layers, aux.zIndex);
     addRunSpacing(layers);
     if (!options.includeImages) stripImages(layers);
@@ -384,7 +475,10 @@ async function capture(source: Element, fullPage: boolean): Promise<void> {
   if (copied) {
     const label = count === 1 ? '1 layer' : `${count} layers`;
     const note = flattened ? ' (flattened for speed)' : '';
-    showToast(`Yoinked ${label}${note} — paste into the Figma plugin`, 'success');
+    showToast(
+      `Yoinked ${label}${note} — paste into the Figma plugin`,
+      'success'
+    );
   } else {
     showToast('Clipboard blocked by this page', 'error');
   }
