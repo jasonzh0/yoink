@@ -68,14 +68,48 @@ function styleToWeight(style: string): { weight: number; italic: boolean } {
   return { weight, italic: /italic|oblique/.test(s) };
 }
 
+// Pages routinely use proprietary web fonts (GT Super Display, PP Neue
+// Montreal, …) that aren't installed in Figma. When none of the named families
+// resolve, fall back by the CSS generic keyword so at least the *category* is
+// right — a serif headline should land on a serif, not sans-serif Roboto.
+// Ordered most- to least-preferred; first one actually installed wins.
+const GENERIC_FALLBACKS: Record<string, string[]> = {
+  serif: ['Georgia', 'Times New Roman', 'Times', 'Roboto Serif'],
+  'sans-serif': ['Inter', 'Roboto', 'Helvetica Neue', 'Arial'],
+  monospace: ['Roboto Mono', 'Menlo', 'Courier New'],
+};
+
 const fontCache: Record<string, FontName> = {};
 let availableFonts: Font[] = [];
 
+const stylesForFamily = (family: string): Font[] => {
+  const norm = normalizeName(family);
+  return norm
+    ? availableFonts.filter((f) => normalizeName(f.fontName.family) === norm)
+    : [];
+};
+
+/** Of one family's installed styles, pick the closest weight — matching slant
+ * first so weight never wins over italic. */
+function pickStyle(styles: Font[], weight: number, italic: boolean): FontName {
+  let best = styles[0].fontName;
+  let bestScore = Infinity;
+  for (const f of styles) {
+    const parsed = styleToWeight(f.fontName.style);
+    const score =
+      Math.abs(parsed.weight - weight) + (parsed.italic === italic ? 0 : 1000);
+    if (score < bestScore) {
+      bestScore = score;
+      best = f.fontName;
+    }
+  }
+  return best;
+}
+
 /** Resolve a CSS font stack + captured weight/italic to an installed Figma
- * font. Walks the stack until a family is installed, then picks the style whose
- * weight is closest (matching slant first). The page's actual web font usually
- * isn't installed, so this commonly falls through to DEFAULT_FONT — but when
- * the family IS present (system fonts, fonts the user has) the weight sticks. */
+ * font: first an exact family match, then the CSS generic-family fallback, then
+ * DEFAULT_FONT. When the family resolves (system fonts, fonts the user has) the
+ * captured weight/slant sticks. */
 async function getMatchingFont(
   fontStr: string,
   weight: number,
@@ -84,31 +118,35 @@ async function getMatchingFont(
   const cacheKey = `${fontStr}|${weight}|${italic ? 'i' : 'n'}`;
   if (fontCache[cacheKey]) return fontCache[cacheKey];
 
-  for (const family of fontStr.split(/\s*,\s*/)) {
-    const norm = normalizeName(family);
-    if (!norm) continue;
-    const styles = availableFonts.filter(
-      (f) => normalizeName(f.fontName.family) === norm
-    );
-    if (styles.length === 0) continue;
+  const families = fontStr.split(/\s*,\s*/);
 
-    let best = styles[0].fontName;
-    let bestScore = Infinity;
-    for (const f of styles) {
-      const parsed = styleToWeight(f.fontName.style);
-      // Heavily penalize a slant mismatch so weight never wins over italic.
-      const score =
-        Math.abs(parsed.weight - weight) +
-        (parsed.italic === italic ? 0 : 1000);
-      if (score < bestScore) {
-        bestScore = score;
-        best = f.fontName;
+  // 1) A named family is installed.
+  for (const family of families) {
+    const styles = stylesForFamily(family);
+    if (styles.length > 0) {
+      const name = pickStyle(styles, weight, italic);
+      await figma.loadFontAsync(name);
+      fontCache[cacheKey] = name;
+      return name;
+    }
+  }
+
+  // 2) Nothing named is installed — honor the generic keyword (serif/sans/mono).
+  for (const family of families) {
+    const generic = family.toLowerCase().replace(/['"]/g, '').trim();
+    const candidates = GENERIC_FALLBACKS[generic];
+    if (!candidates) continue;
+    for (const candidate of candidates) {
+      const styles = stylesForFamily(candidate);
+      if (styles.length > 0) {
+        const name = pickStyle(styles, weight, italic);
+        await figma.loadFontAsync(name);
+        fontCache[cacheKey] = name;
+        return name;
       }
     }
-    await figma.loadFontAsync(best);
-    fontCache[cacheKey] = best;
-    return best;
   }
+
   return DEFAULT_FONT;
 }
 
